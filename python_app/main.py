@@ -23,7 +23,7 @@ import serial
 # ---------------------------------------------------------------------------
 # CONFIGURAZIONE
 # ---------------------------------------------------------------------------
-SERIAL_PORT = "/dev/ttyACM0"     # porta seriale della pala
+SERIAL_PORT = "/dev/ttyUSB0"     # porta seriale della pala
 SERIAL_BAUD = 9600
 SERIAL_TIMEOUT = 0.01            # s - lettura non bloccante (dati a 20 Hz)
 
@@ -113,6 +113,25 @@ def load_image_scaled(path: Path, size):
     return pygame.transform.smoothscale(img, size)
 
 
+def load_image_cover(path: Path, size):
+    """Carica l'immagine e la scala per coprire `size` mantenendo le proporzioni."""
+    img = pygame.image.load(str(path)).convert()
+    img_w, img_h = img.get_size()
+    target_w, target_h = size
+
+    # Fattore di scala per coprire tutto lo schermo
+    scale = max(target_w / img_w, target_h / img_h)
+    new_w = int(img_w * scale)
+    new_h = int(img_h * scale)
+
+    scaled = pygame.transform.smoothscale(img, (new_w, new_h))
+    # Ritaglia i bordi in eccesso per centrare
+    crop_x = (new_w - target_w) // 2
+    crop_y = (new_h - target_h) // 2
+    return scaled.subsurface((crop_x, crop_y, target_w, target_h)).copy()
+
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -129,8 +148,9 @@ def main():
     clock = pygame.time.Clock()
 
     # Precarica immagini
-    start_img = load_image_scaled(START_IMAGE, SCREEN_SIZE)
-    bgs = [load_image_scaled(p, SCREEN_SIZE) for p in BG_IMAGES if p.exists()]
+    start_img = load_image_cover(START_IMAGE, SCREEN_SIZE)
+    bgs = [load_image_cover(p, SCREEN_SIZE) for p in BG_IMAGES if p.exists()]
+
     if not bgs:
         # fallback: sfondo rosa pieno
         surf = pygame.Surface(SCREEN_SIZE)
