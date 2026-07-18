@@ -23,7 +23,13 @@ import serial
 # ---------------------------------------------------------------------------
 # CONFIGURAZIONE
 # ---------------------------------------------------------------------------
-SERIAL_PORT = "/dev/ttyUSB0"     # porta seriale della pala
+# Porte seriali possibili: viene provata la prima disponibile
+SERIAL_PORTS = [
+    "/dev/ttyACM0",
+    "/dev/ttyUSB0",
+    "/dev/ttyACM1",
+    "/dev/ttyUSB1",
+]
 SERIAL_BAUD = 9600
 SERIAL_TIMEOUT = 0.01            # s - lettura non bloccante (dati a 20 Hz)
 
@@ -37,10 +43,28 @@ BG_IMAGES = [
     ASSETS_DIR / "sfondo_2.jpg",
     ASSETS_DIR / "sfondo_3.jpg",
 ]
-BG_ROTATE_SECONDS = 6            # cambia sfondo ogni N secondi
+# Soglie di potenza (W): quando la potenza generata supera la soglia
+# viene mostrato lo sfondo corrispondente (indice = numero di soglie superate - 1).
+# Sotto la prima soglia si vede solo il rosa pieno.
+POWER_THRESHOLDS_W = [10.0, 30.0, 45.0]
+
+# Opacità (0-255) del pannello rosa dietro le scritte quando c'è uno sfondo immagine.
+TEXT_PANEL_ALPHA = 180
+# Raggio angoli arrotondati dei pannelli (px @1920x1080, viene scalato).
+PANEL_RADIUS = 30
+# Padding interno pannelli (px @1920x1080).
+PANEL_PADDING_X = 40
+PANEL_PADDING_Y = 18
+
+# Durata (s) del fade quando cambia lo sfondo per soglia di potenza.
+BG_FADE_SECONDS = 0.4
+
+# Il messaggio "MODALITÀ TEST" scompare dopo questi secondi.
+TEST_HINT_VISIBLE_SECONDS = 4.0
 
 # Colori (coerenti con la palette MAGIS delle immagini)
 PINK = (236, 30, 121)            # rosa MAGIS
+PINK_DARK = (150, 15, 75)        # per ombra testo
 WHITE = (255, 255, 255)
 
 # Font
@@ -50,21 +74,35 @@ FONT_NAME = "dejavusans"         # font di sistema, sempre presente su Raspbian
 # rotazione: 0..500 rpm (valore letto in seriale)
 # vento: 0..15 m/s (scala lineare, modificabile)
 MAX_ROTATION = 500.0
-MAX_WIND_MS = 15.0
+MAX_WIND_MS = 20.0
 
 # Potenza: modello semplificato P = 0.5 * rho * A * v^3 * Cp
 AIR_DENSITY = 1.225              # kg/m^3
-BLADE_RADIUS = 0.5               # m  (raggio della pala didattica)
+BLADE_RADIUS = 0.15               # m  (raggio della pala didattica)
 SWEPT_AREA = math.pi * BLADE_RADIUS ** 2
 POWER_COEFF = 0.35               # Cp tipico
 
 # Filtro sulla lettura (media mobile) per evitare sfarfallio.
 # Dati a 20 Hz -> 10 campioni = 0.5 s di finestra.
-SMOOTHING = 10
+SMOOTHING = 5
 
 # Frame rate del display (Hz). Il loop drena comunque tutti i campioni
 # arrivati nel frattempo, quindi non si perde nessuna lettura.
 DISPLAY_FPS = 30
+
+# Ogni quanto aggiornare i numeri mostrati a schermo (s).
+# La lettura seriale continua a 20 Hz, ma il valore visualizzato
+# viene "congelato" per questo intervallo così da non essere illeggibile.
+VALUE_REFRESH_SECONDS = 0.2
+
+# Se la rotazione resta a 0 per questo tempo torna alla schermata iniziale.
+IDLE_TIMEOUT_SECONDS = 10.0
+
+# --- Modalità test (senza pala eolica) ---------------------------------------
+# Se nessuna porta seriale è disponibile, si entra in modalità test:
+# la freccia SU aumenta la rotazione, la freccia GIÙ la diminuisce.
+TEST_STEP_PER_SEC = 200.0        # incremento (unità rotazione) al secondo tenendo premuto
+TEST_DECAY_PER_SEC = 80.0        # decadimento automatico quando non si preme nulla
 
 
 # ---------------------------------------------------------------------------
@@ -81,11 +119,15 @@ def wind_to_power(v_ms: float) -> float:
 
 
 def open_serial():
-    try:
-        return serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=SERIAL_TIMEOUT)
-    except Exception as exc:
-        print(f"[WARN] Impossibile aprire {SERIAL_PORT}: {exc}", file=sys.stderr)
-        return None
+    for port in SERIAL_PORTS:
+        try:
+            ser = serial.Serial(port, SERIAL_BAUD, timeout=SERIAL_TIMEOUT)
+            print(f"[INFO] Seriale aperta su {port}")
+            return ser
+        except Exception as exc:
+            print(f"[WARN] {port} non disponibile: {exc}", file=sys.stderr)
+    print("[WARN] Nessuna porta seriale disponibile", file=sys.stderr)
+    return None
 
 
 def read_rotation(ser) -> float | None:
@@ -141,34 +183,57 @@ def main():
 
     pygame.init()
     flags = pygame.FULLSCREEN if FULLSCREEN else 0
-    screen = pygame.display.set_mode(SCREEN_SIZE, flags)
+    # In fullscreen usiamo (0,0) per prendere la risoluzione reale del display,
+    # altrimenti pygame potrebbe scalare e lasciare bande fuori scala.
+    mode_size = (0, 0) if FULLSCREEN else SCREEN_SIZE
+    screen = pygame.display.set_mode(mode_size, flags)
+    actual_size = screen.get_size()
+    print(f"[INFO] Risoluzione display: {actual_size[0]}x{actual_size[1]}")
     pygame.display.set_caption("Parco Eolico MAGIS")
     pygame.mouse.set_visible(False)
 
     clock = pygame.time.Clock()
 
     # Precarica immagini
-    start_img = load_image_cover(START_IMAGE, SCREEN_SIZE)
-    bgs = [load_image_cover(p, SCREEN_SIZE) for p in BG_IMAGES if p.exists()]
+    start_img = load_image_cover(START_IMAGE, actual_size)
+    bgs = [load_image_cover(p, actual_size) for p in BG_IMAGES if p.exists()]
 
     if not bgs:
         # fallback: sfondo rosa pieno
-        surf = pygame.Surface(SCREEN_SIZE)
+        surf = pygame.Surface(actual_size)
         surf.fill(PINK)
         bgs = [surf]
 
-    # Font grandi
-    font_label = pygame.font.SysFont(FONT_NAME, 90, bold=True)
-    font_value = pygame.font.SysFont(FONT_NAME, 260, bold=True)
-    font_unit = pygame.font.SysFont(FONT_NAME, 90, bold=True)
-    font_footer = pygame.font.SysFont(FONT_NAME, 60, bold=True)
+    # Font grandi — scalati sulla risoluzione reale (riferimento 1920x1080).
+    scale = min(actual_size[0] / SCREEN_SIZE[0], actual_size[1] / SCREEN_SIZE[1])
+    def sz(px: int) -> int:
+        return max(10, int(px * scale))
+    # Font per la schermata iniziale (rosa pieno): numeri grandi e centrati.
+    font_label_idle = pygame.font.SysFont(FONT_NAME, sz(90), bold=True)
+    font_value_idle = pygame.font.SysFont(FONT_NAME, sz(260), bold=True)
+    font_unit_idle = pygame.font.SysFont(FONT_NAME, sz(90), bold=True)
+    # Font più piccoli quando appare un'immagine di sfondo, così il soggetto resta visibile.
+    font_label_bg = pygame.font.SysFont(FONT_NAME, sz(60), bold=True)
+    font_value_bg = pygame.font.SysFont(FONT_NAME, sz(170), bold=True)
+    font_unit_bg = pygame.font.SysFont(FONT_NAME, sz(60), bold=True)
+    font_footer = pygame.font.SysFont(FONT_NAME, sz(60), bold=True)
 
     ser = open_serial()
+    test_mode = ser is None
+    if test_mode:
+        print("[INFO] Nessuna seriale trovata: modalità TEST attiva "
+              "(freccia SU/GIÙ per regolare la velocità)")
     samples: list[float] = []
     last_rot = 0.0
-
-    bg_index = 0
-    bg_last_switch = time.time()
+    displayed_rot = 0.0
+    last_value_refresh = 0.0
+    last_nonzero_time = time.time()
+    test_rot = 0.0
+    last_frame_time = time.time()
+    app_start_time = time.time()
+    current_level = 0
+    prev_level = 0
+    level_change_time = -10.0  # nel passato -> nessun fade iniziale
 
     running = True
     while running:
@@ -182,10 +247,14 @@ def main():
                 running = False
 
         # --- lettura seriale ---
-        # A 20 Hz arrivano ~0.67 campioni per frame (a 30 fps): svuotiamo
-        # tutto il buffer disponibile e accumuliamo ogni valore nella media
-        # mobile, così nessuna lettura viene scartata.
+        now = time.time()
+        dt = max(0.0, now - last_frame_time)
+        last_frame_time = now
+
         if ser is not None:
+            # A 20 Hz arrivano ~0.67 campioni per frame (a 30 fps): svuotiamo
+            # tutto il buffer disponibile e accumuliamo ogni valore nella media
+            # mobile, così nessuna lettura viene scartata.
             while ser.in_waiting > 0:
                 v = read_rotation(ser)
                 if v is None:
@@ -195,48 +264,138 @@ def main():
                     samples.pop(0)
             if samples:
                 last_rot = sum(samples) / len(samples)
+        else:
+            # Modalità test: freccia SU aumenta, GIÙ diminuisce, altrimenti decade.
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_UP]:
+                test_rot += TEST_STEP_PER_SEC * dt
+            elif keys[pygame.K_DOWN]:
+                test_rot -= TEST_STEP_PER_SEC * dt
+            else:
+                # decadimento morbido verso 0
+                if test_rot > 0:
+                    test_rot = max(0.0, test_rot - TEST_DECAY_PER_SEC * dt)
+            test_rot = max(0.0, min(MAX_ROTATION, test_rot))
+            last_rot = test_rot
+
+        if last_rot > 0.5:
+            last_nonzero_time = now
+        # Aggiorna il valore mostrato solo ogni VALUE_REFRESH_SECONDS
+        if now - last_value_refresh >= VALUE_REFRESH_SECONDS:
+            displayed_rot = last_rot
+            last_value_refresh = now
+
+        idle = (now - last_nonzero_time) > IDLE_TIMEOUT_SECONDS
 
         # --- rendering ---
-        if last_rot <= 0.5:
+        if last_rot <= 0.5 and idle:
+            screen.blit(start_img, (0, 0))
+        elif last_rot <= 0.5 and displayed_rot <= 0.5:
+            # in attesa: mostra la schermata iniziale finché non ripartiamo
             screen.blit(start_img, (0, 0))
         else:
-            # ruota sfondo
-            if time.time() - bg_last_switch > BG_ROTATE_SECONDS:
-                bg_index = (bg_index + 1) % len(bgs)
-                bg_last_switch = time.time()
-
-            # sfondo rosa pieno per garantire leggibilità
-            screen.fill(PINK)
-
-            wind = rotation_to_wind(last_rot)
+            wind = rotation_to_wind(displayed_rot)
             power = wind_to_power(wind)
+
+            # Scegli lo sfondo in base al numero di soglie di potenza superate.
+            level = sum(1 for t in POWER_THRESHOLDS_W if power >= t)
+            if level != current_level:
+                prev_level = current_level
+                current_level = level
+                level_change_time = now
+
+            def draw_bg_for(lv: int):
+                if lv == 0 or not bgs:
+                    screen.fill(PINK)
+                else:
+                    idx = min(lv - 1, len(bgs) - 1)
+                    screen.blit(bgs[idx], (0, 0))
+
+            # fade tra vecchio e nuovo sfondo
+            fade_t = (now - level_change_time) / BG_FADE_SECONDS
+            if fade_t < 1.0 and prev_level != current_level:
+                # disegna il precedente, poi il nuovo con alpha crescente
+                draw_bg_for(prev_level)
+                overlay = pygame.Surface(actual_size).convert()
+                if current_level == 0 or not bgs:
+                    overlay.fill(PINK)
+                else:
+                    idx = min(current_level - 1, len(bgs) - 1)
+                    overlay.blit(bgs[idx], (0, 0))
+                overlay.set_alpha(int(255 * max(0.0, min(1.0, fade_t))))
+                screen.blit(overlay, (0, 0))
+            else:
+                draw_bg_for(current_level)
+
+            # Layout: centrato quando siamo su rosa pieno, disposto negli angoli
+            # quando c'è un'immagine di sfondo così il soggetto resta visibile.
+            has_bg = current_level > 0 and bool(bgs)
+            if has_bg:
+                vel_center = (
+                    int(actual_size[0] * 0.20),
+                    int(actual_size[1] * 0.20),
+                )
+                pow_center = (
+                    int(actual_size[0] * 0.80),
+                    int(actual_size[1] * 0.80),
+                )
+                font_label = font_label_bg
+                font_value = font_value_bg
+                font_unit = font_unit_bg
+            else:
+                vel_center = (actual_size[0] // 2, int(actual_size[1] * 0.32))
+                pow_center = (actual_size[0] // 2, int(actual_size[1] * 0.72))
+                font_label = font_label_idle
+                font_value = font_value_idle
+                font_unit = font_unit_idle
 
             draw_metric(
                 screen,
                 label="VELOCITÀ DEL VENTO",
                 value=f"{wind:.1f}",
                 unit="m/s",
-                center=(SCREEN_SIZE[0] // 2, 340),
+                center=vel_center,
                 font_label=font_label,
                 font_value=font_value,
                 font_unit=font_unit,
+                scale=scale,
+                with_panel=has_bg,
             )
             draw_metric(
                 screen,
                 label="POTENZA GENERATA",
                 value=format_power(power),
                 unit=power_unit(power),
-                center=(SCREEN_SIZE[0] // 2, 780),
+                center=pow_center,
                 font_label=font_label,
                 font_value=font_value,
                 font_unit=font_unit,
+                scale=scale,
+                with_panel=has_bg,
             )
 
-            footer = font_footer.render("PARCO EOLICO MAGIS", True, WHITE)
-            screen.blit(
-                footer,
-                footer.get_rect(center=(SCREEN_SIZE[0] // 2, SCREEN_SIZE[1] - 60)),
-            )
+            # Footer con ombra morbida: visibile solo sul rosa pieno,
+            # negli sfondi con immagine lo nascondiamo per non coprire il soggetto.
+            if not has_bg:
+                draw_text_shadowed(
+                    screen, font_footer, "PARCO EOLICO MAGIS",
+                    center=(actual_size[0] // 2, actual_size[1] - sz(50)),
+                    scale=scale,
+                )
+
+            # Hint modalità test: visibile solo per i primi secondi, poi sparisce.
+            if test_mode:
+                hint_age = now - app_start_time
+                if hint_age < TEST_HINT_VISIBLE_SECONDS:
+                    alpha = 255
+                    if hint_age > TEST_HINT_VISIBLE_SECONDS - 1.0:
+                        alpha = int(255 * (TEST_HINT_VISIBLE_SECONDS - hint_age))
+                    hint_font = pygame.font.SysFont(FONT_NAME, sz(22))
+                    hint = hint_font.render(
+                        "MODALITÀ TEST — ↑/↓ per regolare la velocità", True, WHITE
+                    )
+                    hint.set_alpha(max(0, min(255, alpha)))
+                    screen.blit(hint, (sz(20), sz(20)))
 
         pygame.display.flip()
         clock.tick(DISPLAY_FPS)
@@ -246,19 +405,63 @@ def main():
         ser.close()
 
 
-def draw_metric(screen, label, value, unit, center, font_label, font_value, font_unit):
+def _blit_text_with_shadow(screen, surf, rect, scale=1.0, shadow=True):
+    if shadow:
+        # ombra soft: 2 offset per un effetto morbido
+        off = max(2, int(4 * scale))
+        shadow_surf = surf.copy()
+        # tinge di scuro convertendo i pixel bianchi
+        dark = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
+        dark.fill((PINK_DARK[0], PINK_DARK[1], PINK_DARK[2], 200))
+        shadow_surf.blit(dark, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        srect = rect.copy()
+        srect.x += off
+        srect.y += off
+        screen.blit(shadow_surf, srect)
+    screen.blit(surf, rect)
+
+
+def draw_text_shadowed(screen, font, text, center, scale=1.0):
+    surf = font.render(text, True, WHITE)
+    rect = surf.get_rect(center=center)
+    _blit_text_with_shadow(screen, surf, rect, scale=scale)
+
+
+def draw_metric(screen, label, value, unit, center, font_label, font_value,
+                font_unit, scale=1.0, with_panel=False):
     cx, cy = center
     lbl = font_label.render(label, True, WHITE)
     val = font_value.render(value, True, WHITE)
     unt = font_unit.render(unit, True, WHITE)
 
-    screen.blit(lbl, lbl.get_rect(center=(cx, cy - 130)))
+    gap = int(20 * scale)
+    lbl_rect = lbl.get_rect(center=(cx, cy - int(130 * scale)))
 
-    # valore + unità affiancati
-    total_w = val.get_width() + 20 + unt.get_width()
+    total_w = val.get_width() + gap + unt.get_width()
     x0 = cx - total_w // 2
-    screen.blit(val, val.get_rect(midleft=(x0, cy + 40)))
-    screen.blit(unt, unt.get_rect(midleft=(x0 + val.get_width() + 20, cy + 80)))
+    # unità allineata alla baseline del numero (non a mezz'altezza)
+    val_rect = val.get_rect(midleft=(x0, cy + int(40 * scale)))
+    unt_rect = unt.get_rect(bottomleft=(val_rect.right + gap, val_rect.bottom - int(20 * scale)))
+
+    # Pannello rosa arrotondato dietro le scritte per leggibilità sopra all'immagine.
+    if with_panel:
+        pad_x = int(PANEL_PADDING_X * scale)
+        pad_y = int(PANEL_PADDING_Y * scale)
+        union = lbl_rect.union(val_rect).union(unt_rect)
+        panel_rect = union.inflate(pad_x * 2, pad_y * 2)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        radius = int(PANEL_RADIUS * scale)
+        pygame.draw.rect(
+            panel,
+            (PINK[0], PINK[1], PINK[2], TEXT_PANEL_ALPHA),
+            panel.get_rect(),
+            border_radius=radius,
+        )
+        screen.blit(panel, panel_rect)
+
+    _blit_text_with_shadow(screen, lbl, lbl_rect, scale=scale, shadow=not with_panel)
+    _blit_text_with_shadow(screen, val, val_rect, scale=scale, shadow=not with_panel)
+    _blit_text_with_shadow(screen, unt, unt_rect, scale=scale, shadow=not with_panel)
 
 
 def format_power(watt: float) -> str:
