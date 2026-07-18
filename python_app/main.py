@@ -46,15 +46,15 @@ BG_IMAGES = [
 # Soglie di potenza (W): quando la potenza generata supera la soglia
 # viene mostrato lo sfondo corrispondente (indice = numero di soglie superate - 1).
 # Sotto la prima soglia si vede solo il rosa pieno.
-POWER_THRESHOLDS_W = [10.0, 30.0, 45.0]
+POWER_THRESHOLDS_W = [50.0, 200.0, 400.0]
 
 # Opacità (0-255) del pannello rosa dietro le scritte quando c'è uno sfondo immagine.
 TEXT_PANEL_ALPHA = 180
 # Raggio angoli arrotondati dei pannelli (px @1920x1080, viene scalato).
-PANEL_RADIUS = 30
+PANEL_RADIUS = 24
 # Padding interno pannelli (px @1920x1080).
-PANEL_PADDING_X = 40
-PANEL_PADDING_Y = 18
+PANEL_PADDING_X = 28
+PANEL_PADDING_Y = 12
 
 # Durata (s) del fade quando cambia lo sfondo per soglia di potenza.
 BG_FADE_SECONDS = 0.4
@@ -73,18 +73,18 @@ FONT_NAME = "dejavusans"         # font di sistema, sempre presente su Raspbian
 # Mappatura rotazione -> vento -> potenza
 # rotazione: 0..500 rpm (valore letto in seriale)
 # vento: 0..15 m/s (scala lineare, modificabile)
-MAX_ROTATION = 500.0
-MAX_WIND_MS = 20.0
+MAX_ROTATION = 200.0
+MAX_WIND_MS = 15.0
 
 # Potenza: modello semplificato P = 0.5 * rho * A * v^3 * Cp
 AIR_DENSITY = 1.225              # kg/m^3
-BLADE_RADIUS = 0.15               # m  (raggio della pala didattica)
+BLADE_RADIUS = 0.5               # m  (raggio della pala didattica)
 SWEPT_AREA = math.pi * BLADE_RADIUS ** 2
 POWER_COEFF = 0.35               # Cp tipico
 
 # Filtro sulla lettura (media mobile) per evitare sfarfallio.
 # Dati a 20 Hz -> 10 campioni = 0.5 s di finestra.
-SMOOTHING = 5
+SMOOTHING = 10
 
 # Frame rate del display (Hz). Il loop drena comunque tutti i campioni
 # arrivati nel frattempo, quindi non si perde nessuna lettura.
@@ -93,7 +93,7 @@ DISPLAY_FPS = 30
 # Ogni quanto aggiornare i numeri mostrati a schermo (s).
 # La lettura seriale continua a 20 Hz, ma il valore visualizzato
 # viene "congelato" per questo intervallo così da non essere illeggibile.
-VALUE_REFRESH_SECONDS = 0.2
+VALUE_REFRESH_SECONDS = 1.0
 
 # Se la rotazione resta a 0 per questo tempo torna alla schermata iniziale.
 IDLE_TIMEOUT_SECONDS = 10.0
@@ -332,12 +332,12 @@ def main():
             has_bg = current_level > 0 and bool(bgs)
             if has_bg:
                 vel_center = (
-                    int(actual_size[0] * 0.20),
-                    int(actual_size[1] * 0.20),
+                    int(actual_size[0] * 0.15),
+                    int(actual_size[1] * 0.15),
                 )
                 pow_center = (
-                    int(actual_size[0] * 0.80),
-                    int(actual_size[1] * 0.80),
+                    int(actual_size[0] * 0.85),
+                    int(actual_size[1] * 0.85),
                 )
                 font_label = font_label_bg
                 font_value = font_value_bg
