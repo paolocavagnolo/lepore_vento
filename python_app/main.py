@@ -46,7 +46,10 @@ BG_IMAGES = [
 # Soglie di potenza (W): quando la potenza generata supera la soglia
 # viene mostrato lo sfondo corrispondente (indice = numero di soglie superate - 1).
 # Sotto la prima soglia si vede solo il rosa pieno.
-POWER_THRESHOLDS_W = [100.0, 200.0, 400.0]
+POWER_THRESHOLDS_W = [20.0, 31.0, 42.0]
+# Isteresi: soglia più bassa per scendere di livello, così quando il vento
+# oscilla intorno alla soglia le immagini non cambiano continuamente.
+POWER_HYSTERESIS_W = 5.0
 
 # Opacità (0-255) del pannello rosa dietro le scritte quando c'è uno sfondo immagine.
 TEXT_PANEL_ALPHA = 180
@@ -78,13 +81,13 @@ MAX_WIND_MS = 15.0
 
 # Potenza: modello semplificato P = 0.5 * rho * A * v^3 * Cp
 AIR_DENSITY = 1.225              # kg/m^3
-BLADE_RADIUS = 0.2               # m  (raggio della pala didattica)
+BLADE_RADIUS = 0.25               # m  (raggio della pala didattica)
 SWEPT_AREA = math.pi * BLADE_RADIUS ** 2
-POWER_COEFF = 0.25               # Cp tipico
+POWER_COEFF = 0.80               # Cp tipico
 
 # Filtro sulla lettura (media mobile) per evitare sfarfallio.
 # Dati a 20 Hz -> 10 campioni = 0.5 s di finestra.
-SMOOTHING = 2
+SMOOTHING = 7
 
 # Frame rate del display (Hz). Il loop drena comunque tutti i campioni
 # arrivati nel frattempo, quindi non si perde nessuna lettura.
@@ -116,6 +119,22 @@ def rotation_to_wind(rot: float) -> float:
 def wind_to_power(v_ms: float) -> float:
     """Ritorna la potenza in watt."""
     return 0.5 * AIR_DENSITY * SWEPT_AREA * (v_ms ** 3) * POWER_COEFF
+
+
+def power_level(power: float, current: int) -> int:
+    """
+    Calcola il livello con isteresi.
+    Per salire serve superare la soglia; per scendere serve scendere sotto
+    la soglia meno l'isteresi.
+    """
+    level = current
+    # tenta di salire
+    while level < len(POWER_THRESHOLDS_W) and power >= POWER_THRESHOLDS_W[level]:
+        level += 1
+    # tenta di scendere
+    while level > 0 and power < (POWER_THRESHOLDS_W[level - 1] - POWER_HYSTERESIS_W):
+        level -= 1
+    return level
 
 
 def open_serial():
@@ -299,8 +318,9 @@ def main():
             wind = rotation_to_wind(displayed_rot)
             power = wind_to_power(wind)
 
-            # Scegli lo sfondo in base al numero di soglie di potenza superate.
-            level = sum(1 for t in POWER_THRESHOLDS_W if power >= t)
+            # Scegli lo sfondo in base al numero di soglie di potenza superate,
+            # con isteresi per evitare cambi continui vicino alle soglie.
+            level = power_level(power, current_level)
             if level != current_level:
                 prev_level = current_level
                 current_level = level
