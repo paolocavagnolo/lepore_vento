@@ -46,7 +46,7 @@ BG_IMAGES = [
 # Soglie di potenza (W): quando la potenza generata supera la soglia
 # viene mostrato lo sfondo corrispondente (indice = numero di soglie superate - 1).
 # Sotto la prima soglia si vede solo il rosa pieno.
-POWER_THRESHOLDS_W = [50.0, 200.0, 400.0]
+POWER_THRESHOLDS_W = [100.0, 200.0, 400.0]
 
 # Opacità (0-255) del pannello rosa dietro le scritte quando c'è uno sfondo immagine.
 TEXT_PANEL_ALPHA = 180
@@ -78,13 +78,13 @@ MAX_WIND_MS = 15.0
 
 # Potenza: modello semplificato P = 0.5 * rho * A * v^3 * Cp
 AIR_DENSITY = 1.225              # kg/m^3
-BLADE_RADIUS = 0.5               # m  (raggio della pala didattica)
+BLADE_RADIUS = 0.2               # m  (raggio della pala didattica)
 SWEPT_AREA = math.pi * BLADE_RADIUS ** 2
-POWER_COEFF = 0.35               # Cp tipico
+POWER_COEFF = 0.25               # Cp tipico
 
 # Filtro sulla lettura (media mobile) per evitare sfarfallio.
 # Dati a 20 Hz -> 10 campioni = 0.5 s di finestra.
-SMOOTHING = 10
+SMOOTHING = 2
 
 # Frame rate del display (Hz). Il loop drena comunque tutti i campioni
 # arrivati nel frattempo, quindi non si perde nessuna lettura.
@@ -93,7 +93,7 @@ DISPLAY_FPS = 30
 # Ogni quanto aggiornare i numeri mostrati a schermo (s).
 # La lettura seriale continua a 20 Hz, ma il valore visualizzato
 # viene "congelato" per questo intervallo così da non essere illeggibile.
-VALUE_REFRESH_SECONDS = 1.0
+VALUE_REFRESH_SECONDS = 0.1
 
 # Se la rotazione resta a 0 per questo tempo torna alla schermata iniziale.
 IDLE_TIMEOUT_SECONDS = 10.0
@@ -227,7 +227,9 @@ def main():
     last_rot = 0.0
     displayed_rot = 0.0
     last_value_refresh = 0.0
-    last_nonzero_time = time.time()
+    # Inizializziamo "nel passato" così all'avvio siamo già in stato idle
+    # e mostriamo la schermata iniziale finché non arriva una rotazione > 0.
+    last_nonzero_time = time.time() - IDLE_TIMEOUT_SECONDS - 1.0
     test_rot = 0.0
     last_frame_time = time.time()
     app_start_time = time.time()
@@ -288,10 +290,10 @@ def main():
         idle = (now - last_nonzero_time) > IDLE_TIMEOUT_SECONDS
 
         # --- rendering ---
-        if last_rot <= 0.5 and idle:
-            screen.blit(start_img, (0, 0))
-        elif last_rot <= 0.5 and displayed_rot <= 0.5:
-            # in attesa: mostra la schermata iniziale finché non ripartiamo
+        # Torna alla schermata iniziale SOLO dopo IDLE_TIMEOUT_SECONDS
+        # di rotazione a zero: se la pala rallenta un attimo continuiamo
+        # a mostrare velocità/potenza (congelate a 0) finché non scade.
+        if idle:
             screen.blit(start_img, (0, 0))
         else:
             wind = rotation_to_wind(displayed_rot)
@@ -332,12 +334,12 @@ def main():
             has_bg = current_level > 0 and bool(bgs)
             if has_bg:
                 vel_center = (
-                    int(actual_size[0] * 0.15),
-                    int(actual_size[1] * 0.15),
+                    int(actual_size[0] * 0.20),
+                    int(actual_size[1] * 0.20),
                 )
                 pow_center = (
-                    int(actual_size[0] * 0.85),
-                    int(actual_size[1] * 0.85),
+                    int(actual_size[0] * 0.80),
+                    int(actual_size[1] * 0.80),
                 )
                 font_label = font_label_bg
                 font_value = font_value_bg
