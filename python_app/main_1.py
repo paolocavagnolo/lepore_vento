@@ -87,7 +87,7 @@ POWER_COEFF = 0.80               # Cp tipico
 
 # Filtro sulla lettura (media mobile) per evitare sfarfallio.
 # Dati a 20 Hz -> 10 campioni = 0.5 s di finestra.
-SMOOTHING = 7
+SMOOTHING = 10
 
 # Frame rate del display (Hz). Il loop drena comunque tutti i campioni
 # arrivati nel frattempo, quindi non si perde nessuna lettura.
