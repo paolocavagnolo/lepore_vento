@@ -12,6 +12,7 @@ Avvio automatico: aggiungere in /etc/xdg/lxsession/LXDE-pi/autostart:
 """
 
 import os
+import re
 import sys
 import math
 import time
@@ -149,6 +150,11 @@ def open_serial():
     return None
 
 
+# Estrae il PRIMO numero della riga (evita di concatenare cifre di righe
+# sporche tipo "12\r34" → "1234" che facevano schizzare la velocità).
+_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
 def read_rotation(ser) -> float | None:
     """Legge una riga dalla seriale e prova a interpretarla come numero."""
     if ser is None:
@@ -159,14 +165,18 @@ def read_rotation(ser) -> float | None:
         return None
     if not line:
         return None
-    # accetta "123", "123.4", "rpm=123", ecc.
-    digits = "".join(c for c in line if c.isdigit() or c in ".-")
-    if not digits:
+    m = _NUM_RE.search(line)
+    if not m:
         return None
     try:
-        return float(digits)
+        v = float(m.group(0))
     except ValueError:
         return None
+    # Scarta valori chiaramente fuori range (glitch UART): non clampare,
+    # buttali via così non entrano nel filtro.
+    if v < 0 or v > MAX_ROTATION * 1.1:
+        return None
+    return v
 
 
 def load_image_scaled(path: Path, size):
@@ -284,7 +294,10 @@ def main():
                 if len(samples) > SMOOTHING:
                     samples.pop(0)
             if samples:
-                last_rot = sum(samples) / len(samples)
+                # Filtro mediana: uno spike isolato viene scartato del tutto,
+                # a differenza della media che ne resta influenzata.
+                ordered = sorted(samples)
+                last_rot = ordered[len(ordered) // 2]
         else:
             # Modalità test: freccia SU aumenta, GIÙ diminuisce, altrimenti decade.
             keys = pygame.key.get_pressed()
