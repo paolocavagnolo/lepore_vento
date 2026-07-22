@@ -47,13 +47,13 @@ BG_IMAGES = [
 # Soglie di potenza (W): quando la potenza generata supera la soglia
 # viene mostrato lo sfondo corrispondente (indice = numero di soglie superate - 1).
 # Sotto la prima soglia si vede solo il rosa pieno.
-POWER_THRESHOLDS_W = [20.0, 31.0, 42.0]
+POWER_THRESHOLDS_W = [10.0, 45.0, 60.0]
 # Isteresi: soglia più bassa per scendere di livello, così quando il vento
 # oscilla intorno alla soglia le immagini non cambiano continuamente.
 POWER_HYSTERESIS_W = 5.0
 
 # Opacità (0-255) del pannello rosa dietro le scritte quando c'è uno sfondo immagine.
-TEXT_PANEL_ALPHA = 180
+TEXT_PANEL_ALPHA = 0
 # Raggio angoli arrotondati dei pannelli (px @1920x1080, viene scalato).
 PANEL_RADIUS = 24
 # Padding interno pannelli (px @1920x1080).
