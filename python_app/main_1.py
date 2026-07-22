@@ -40,9 +40,9 @@ FULLSCREEN = True
 ASSETS_DIR = Path(__file__).parent / "imgs"
 START_IMAGE = ASSETS_DIR / "inizio.png"
 BG_IMAGES = [
-    ASSETS_DIR / "sfondo_1.jpg",
-    ASSETS_DIR / "sfondo_2.jpg",
     ASSETS_DIR / "sfondo_3.jpg",
+    ASSETS_DIR / "sfondo_2.jpg",
+    ASSETS_DIR / "sfondo_1.jpg",
 ]
 # Soglie di potenza (W): quando la potenza generata supera la soglia
 # viene mostrato lo sfondo corrispondente (indice = numero di soglie superate - 1).
